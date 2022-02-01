@@ -187,7 +187,7 @@ struct Reply process_command(const int sockfd, char* command)
 	struct Reply reply;
 	char* statusReturn;
 	statusReturn = strtok(bufferRecv, " ");
-	if(!strcmp(statusReturn, "SUCCESS")){
+	if(!strcmp(statusReturn, "SUCCESS")){ // check for type of status
 		reply.status = 0;
 	}else if (!strcmp(statusReturn, "FAILURE_ALREADY_EXISTS")) {
 		reply.status = 1;
@@ -243,7 +243,7 @@ void process_chatmode(const char* host, const int port)
 	display_title(); // show menu, get command from user
 	get_command(command, sizeof(command));
 
-	while(1){
+	while(1){ // continue to get messages from the user and display messages from others
 		get_message(message, sizeof(message));
 		display_message(message);
 	}

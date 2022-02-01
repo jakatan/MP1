@@ -16,7 +16,6 @@
 #define MAX_CLIENTS 256
 #define MAX_BUFFER 2048
 
-static _Atomic unsigned int cli_count = 0;
 static int uid = 10;
 
 
@@ -218,14 +217,6 @@ int main (int argc, char **argv){
 	while(1){
 	    socklen_t clientlen = sizeof(cli_addr);
 	    connfd = accept(listenfd, (struct sockaddr*)&cli_addr, &clientlen );
-	    
-	    // check if client count is almost max
-	   if((cli_count + 1 ) == MAX_CLIENTS){
-	       printf("Maximum clients are connected.");
-	       print_ip_addr(cli_addr);
-	       close(connfd);
-	       continue;
-	   }
 	   
 	   //client settings
 	   
