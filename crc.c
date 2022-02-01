@@ -124,24 +124,22 @@ struct Reply process_command(const int sockfd, char* command)
 	printf("Command given is: %s" , command_type);
 	printf("Room name is: %s" , roomName);
 
-	if(!strcmp(command_type, "CREATE")){
-		printf("inside of the CREATE branch");
-	}else if (!strcmp(command_type, "DELETE")){
-		printf("inside of the DELETE branch");
-	}else if (!strcmp(command_type, "JOIN")){
-		printf("inside of the JOIN branch");
-	}else if(!strcmp(command_type, "LIST")){
-		printf("inside of the LIST branch");
-	}else{
-		printf("invalid option");
-	}
+
 
 	// ------------------------------------------------------------
 	// GUIDE 2:
 	// After you create the message, you need to send it to the
 	// server and receive a result from the server.
 	// ------------------------------------------------------------
-
+	int sent_amount;
+	int recv_amount;
+	char bufferSent[256];
+	char bufferRecv[256];
+	
+	strcpy(bufferSent, command); // copy command to the buffer to send
+	
+	sent_amount = send(sockfd, bufferSent, sizeof(bufferSent), 0);
+	recv_amount = recv(sockfd, bufferRecv, sizeof(bufferRecv), 0);
 
 	// ------------------------------------------------------------
 	// GUIDE 3:
@@ -179,7 +177,7 @@ struct Reply process_command(const int sockfd, char* command)
     //
     // Reply reply;
     // reply.status = SUCCESS;
-    // strcpy(reply.list_room, list);
+    // strcpy(reply.list_room, list)
     // 
     // "list" is a string that contains a list of chat rooms such 
     // as "r1,r2,r3,"
@@ -187,9 +185,40 @@ struct Reply process_command(const int sockfd, char* command)
 
 	// REMOVE below code and write your own Reply.
 	struct Reply reply;
-	reply.status = SUCCESS;
-	reply.num_member = 5;
-	reply.port = 1024;
+	char* statusReturn;
+	statusReturn = strtok(bufferRecv, " ");
+	if(!strcmp(statusReturn, "SUCCESS")){
+		reply.status = 0;
+	}else if (!strcmp(statusReturn, "FAILURE_ALREADY_EXISTS")) {
+		reply.status = 1;
+	}else if (!strcmp(statusReturn, "FAILURE_NOT_EXISTS")){
+		reply.status = 2;
+	}else if (!strcmp(statusReturn, "FAILURE_INVALID")){
+		reply.status = 3;
+	}else if(!strcmp(statusReturn, "FAILURE_UNKNOWN")){
+		reply.status = 4;
+	}else{
+		printf("no reply status possible");	
+	}
+
+	if(!strcmp(command_type, "CREATE") || !strcmp(command_type, "DELETE")){
+		printf("inside of the CREATE/DELETE branch");
+	}else if (!strcmp(command_type, "JOIN")){
+		printf("inside of the JOIN branch");
+		reply.num_member = strtok(bufferRecv, " ");
+		reply.port = strtok(NULL, " ");
+	}else if(!strcmp(command_type, "LIST")){
+		int listIterator = 0;
+		char* tempRoom = strtok(NULL, " ");
+		while(tempRoom!= NULL){
+			reply.list_room[listIterator] = tempRoom;
+			listIterator++;
+		}
+		printf("inside of the LIST branch");
+	}else{
+		printf("invalid option received from server");
+		reply.status = FAILURE_INVALID;
+	}
 	return reply;
 }
 
@@ -201,12 +230,23 @@ struct Reply process_command(const int sockfd, char* command)
  */
 void process_chatmode(const char* host, const int port)
 {
+	char*message;
+	char*command;
+	int socket = connect_to(host,port);
+	
 	// ------------------------------------------------------------
 	// GUIDE 1:
 	// In order to join the chatroom, you are supposed to connect
 	// to the server using host and port.
 	// You may re-use the function "connect_to".
 	// ------------------------------------------------------------
+	display_title(); // show menu, get command from user
+	get_command(command, sizeof(command));
+
+	while(1){
+		get_message(message, sizeof(message));
+		display_message(message);
+	}
 
 	// ------------------------------------------------------------
 	// GUIDE 2:

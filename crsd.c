@@ -15,36 +15,22 @@
 
 #define MAX_CLIENTS 256
 #define MAX_BUFFER 2048
-#define MAX_NAME 64
 
 static _Atomic unsigned int cli_count = 0;
 static int uid = 10;
+
+
+room room_db[MAX_CLIENTS];
 
 typedef struct{
     struct sockaddr_in address;
     int sockfd;
     int uid;
-    char name[MAX_NAME];
 }client_t;
 
 client_t *clients[MAX_CLIENTS];
 
 pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-
-void str_overwrite_stdout(){
-    printf("\r%s",">");
-    fflush(stdout);
-}
-
-void str_trim_lf(char* arr, int length){
-    for (int i = 0; i < length; i++){
-        if(arr[i] == '\n'){
-            arr[i] == '\0';
-            break;
-        }
-    }
-}
 
 void queue_add(client_t *cl){
     pthread_mutex_lock(&clients_mutex);
@@ -91,24 +77,9 @@ void send_message(char* s, int uid){
     pthread_mutex_unlock(&clients_mutex);
 }
 
-void *handle_client(void*arg){
+void *handle_client(int *dbValue, int sockfd){
     char buffer[MAX_BUFFER];
-    char name[MAX_NAME];
     int leave = 0;
-    cli_count++;
-    
-    client_t *cli = (client_t*)arg;
-    
-    //name
-    if(recv(cli->sockfd, name, MAX_NAME, 0) <= 0 || strlen(name) < 2 || strlen(name) >= MAX_NAME -1){
-        printf("Enter the name correctly\n");
-        leave = 1;
-    }else{
-        strcpy(cli -> name, name);
-        sprintf(buffer, "%s has joined\n", cli->name);
-        printf("%s", buffer);
-        send_message(buffer, cli->uid);
-    }
     
     bzero(buffer, MAX_BUFFER);
     
@@ -117,35 +88,89 @@ void *handle_client(void*arg){
             break;
         }
         
-        int receive = recv(cli->sockfd, buffer, MAX_BUFFER, 0);
-        
-        if(receive > 0 ){
-            if(strlen(buffer)>0){
-                send_message(buffer, cli->uid);
-                str_trim_lf(buffer, strlen(buffer));
-                printf("%s -> %s", buffer, cli->name);
+        int receive = recv(sockfd, buffer, MAX_BUFFER, 0);
+        char* commandType = strtok(buffer," ");
+        char buffer_Sent[256];
+        int sent_Amount;
+        char* status;
+        if(receive > 0){
+            if(!strcmp(commandType, "CREATE")){ // create room
+                char* roomName = strtok(NULL, " ");
+                for (int i = 0; i < strlen(room_db); i++){ // search if room exists
+                    if(!strcmp(roomName,room_db[i].room_name)){
+                        status = "FAILURE_ALREADY_EXISTS";
+                    }
+                }
+                int slaveSock = socket (AF_INET, SOCK_STREAM, 0); // create new room + socket
+                room newRoom;
+                strcpy(newRoom.room_name, roomName);
+                newRoom.port_num = "127.0.0.1"; // might need to change
+                newRoom.num_members = 1;
+                strcpy(newRoom.slave_socket,slaveSock);
+                
+                room_db[*dbValue] = newRoom; // add room to databse, iterate counter
+                dbValue++;
+                status = "SUCCESS";
+                strcpy(buffer_Sent, status);
+            }else if (!strcmp(commandType, "DELETE") ){
+                int found = 0;
+                char* roomName = strtok(NULL, " ");
+                for (int i = 0; i < strlen(room_db); i++){ // search if room exists
+                    if(!strcmp(roomName,room_db[i].room_name)){
+                        strcpy(room_db[i].room_name, "");
+                        strcpy(room_db[i].port_num, "");
+                        strcpy(room_db[i].num_members, 0);
+                        strcpy(room_db[i].slave_socket, 0);
+                    }
+                } 
+                if(!found){
+                    status = "FAILURE_NOT_EXISTS";
+                }else{
+                    status = "SUCCESS";
+                }
+                strcpy(buffer_Sent, status); // if room already exists update status
+            }else if(!strcmp(commandType, "JOIN") ){
+                int found = 0;
+                char* roomName = strtok(NULL, " ");
+                for (int i = 0; i < strlen(room_db); i++){ // search if room exists
+                    if(!strcmp(roomName,room_db[i].room_name)){
+                        status = "SUCCESS ";
+                        strcat(status, room_db[i].num_members+1);
+                        strcat(status, room_db[i].port_num);
+                        room_db[i].num_members = room_db[i].num_members+1;  // update room number
+                        found = 1;
+                    }
+                } 
+                if(!found){
+                    status = "FAILURE_NOT_EXISTS";
+                }
+                strcpy(buffer_Sent, status);
+            }else if(!strcmp(commandType, "LIST") ){
+                int found = 0;
+                if(strlen(room_db)){
+                    status = "SUCCESS ";
+                    for(int i = 0; i < strlen(room_db); i++){
+                        strcat(status, room_db[i].room_name);
+                        strcat(status, " ");
+                    }
+                }else{
+                    status = "FAILURE_INVALID ";
+                }
+                strcpy(buffer_Sent,status);
+            }else{
+                printf("command type does not exist from server side");
             }
-        } else if (receive == 0 || strcmp(buffer, "exit") == 0){
-            sprintf(buffer, "%s has left the room", cli -> name);
-            printf("%s", buffer);
-            send_message(buffer, cli->uid);
-            leave = 1;
         }else{
             printf("ERROR: -1\n");
             leave = 1;
         }
-        bzero(buffer, MAX_BUFFER);
     }
     
-    close(cli -> sockfd);
-    queue_remove(cli -> uid);
-    free(cli);
-    cli_count--;
     pthread_detach(pthread_self());
     
     return NULL;
         
-}
+    }
 int main (int argc, char **argv){
     if (argc!=2){
         printf("Usage : %s <port>\n",argv[0]);
@@ -177,14 +202,12 @@ int main (int argc, char **argv){
 	}
 	
 	//bind
-	
      if(bind(listenfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
          printf("ERROR ON BIND");
          return EXIT_FAILURE;
      }
 	
 	//listen
-	 
 	if(listen(listenfd, 10) < 0){
 	    printf("ERROR on listen");
 	    return EXIT_FAILURE;
@@ -216,5 +239,4 @@ int main (int argc, char **argv){
 	   
 	   sleep(1);
 	}
-	
 }
