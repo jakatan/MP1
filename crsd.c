@@ -19,7 +19,7 @@
 static int uid = 10;
 
 
-room room_db[MAX_CLIENTS];
+room room_db[MAX_CLIENTS]; // database for all rooms
 
 typedef struct{
     struct sockaddr_in address;
@@ -27,11 +27,11 @@ typedef struct{
     int uid;
 }client_t;
 
-client_t *clients[MAX_CLIENTS];
+client_t *clients[MAX_CLIENTS]; // array to store max users
 
 pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-void queue_add(client_t *cl){
+void queue_add(client_t *cl){ // add clients to queue when request is sent
     pthread_mutex_lock(&clients_mutex);
     
     for (int i = 0; i < MAX_CLIENTS; i++){
@@ -43,7 +43,7 @@ void queue_add(client_t *cl){
     pthread_mutex_unlock(&clients_mutex);
 }
 
-void queue_remove(int uid){
+void queue_remove(int uid){ // method to pop clients from a queue once request is resolved
     pthread_mutex_lock(&clients_mutex);
     
   for(int i = 0; i < MAX_CLIENTS; i++){
@@ -54,24 +54,6 @@ void queue_remove(int uid){
           } 
       }
         
-    }
-    pthread_mutex_unlock(&clients_mutex);
-}
-void print_ip_addr(struct sockaddr_in addr){
-    printf("%d.%d.%d.%d" , addr.sin_addr.s_addr & 0xff, (addr.sin_addr.s_addr & 0xff00) >> 8, (addr.sin_addr.s_addr & 0xf0000) >> 16, (addr.sin_addr.s_addr &0xff000000) >> 24);
-}
-
-void send_message(char* s, int uid){
-    pthread_mutex_lock(&clients_mutex);
-    for(int i = 0; i < MAX_CLIENTS; i++){
-        if(clients[i]){
-            if(clients[i] -> uid != uid){
-                if(write(clients[i]->sockfd, s, strlen(s))<0){
-                    printf("ERROR: writing to the descriptor failed");
-                    break;
-                }
-            }
-        }
     }
     pthread_mutex_unlock(&clients_mutex);
 }
@@ -140,15 +122,15 @@ void *handle_client(int *dbValue, int sockfd){
                         found = 1;
                     }
                 } 
-                if(!found){
+                if(!found){ 
                     status = "FAILURE_NOT_EXISTS";
                 }
                 strcpy(buffer_Sent, status);
             }else if(!strcmp(commandType, "LIST") ){
                 int found = 0;
-                if(strlen(room_db)){
+                if(strlen(room_db)){ // if there is a single room in the database
                     status = "SUCCESS ";
-                    for(int i = 0; i < strlen(room_db); i++){
+                    for(int i = 0; i < strlen(room_db); i++){ // send all of the rooms to the client with spaces seperating them
                         strcat(status, room_db[i].room_name);
                         strcat(status, " ");
                     }
@@ -186,7 +168,7 @@ int main (int argc, char **argv){
     struct sockaddr_in cli_addr;
     pthread_t tid;
     
-    listenfd = socket (AF_INET, SOCK_STREAM, 0);
+    listenfd = socket (AF_INET, SOCK_STREAM, 0); // initialize sockaddr
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = inet_addr(ip);
     serv_addr.sin_port = htons(port);
@@ -194,7 +176,6 @@ int main (int argc, char **argv){
     signal (SIGPIPE, SIG_IGN);
     
     //socket creation
-    
 	if(setsockopt(listenfd, SOL_SOCKET,(SO_REUSEPORT | SO_REUSEADDR),(char*)&option,sizeof(option)) < 0){
 	    printf("ERROR ON SET SOCKET");
 	    return EXIT_FAILURE;
@@ -218,12 +199,11 @@ int main (int argc, char **argv){
 	    socklen_t clientlen = sizeof(cli_addr);
 	    connfd = accept(listenfd, (struct sockaddr*)&cli_addr, &clientlen );
 	   
-	   //client settings
-	   
-	   client_t *cli = (client_t*)malloc(sizeof(client_t));
+	   client_t *cli = (client_t*)malloc(sizeof(client_t)); 
 	   cli -> address = cli_addr;
 	   cli -> sockfd = connfd;
 	   cli -> uid = uid++;
+	   
 	   // add a client to the queue
 	   queue_add(cli);
 	   pthread_create(&tid, NULL, &handle_client, (void*)cli);
