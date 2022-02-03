@@ -73,12 +73,6 @@ struct Reply
     };
 };
 
-typedef struct{
-    char room_name[256];
-    char port_num;
-    int num_members;
-    int slave_socket[256];
-}room;
 /* 
  * DO NOT MODIFY THIS FUNCTION
  * This function convert input string to uppercase.

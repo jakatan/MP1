@@ -4,8 +4,8 @@ clean:
 	rm client server
 
 crc.o: crc.c interface.h
-	gcc crc.c -o client
+	gcc  -pthread -o client crc.c 
 
 crsd.o: crsd.c interface.h
-	gcc crsd.c -o server
+	gcc  -pthread -o server crsd.c 
 	

@@ -3,6 +3,8 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/time.h>
+#include <arpa/inet.h>
+
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,9 +12,6 @@
 #include "interface.h"
 
 
-/*
- * TODO: IMPLEMENT BELOW THREE FUNCTIONS
- */
 int connect_to(const char *host, const int port);
 struct Reply process_command(const int sockfd, char* command);
 void process_chatmode(const char* host, const int port);
@@ -26,10 +25,10 @@ int main(int argc, char** argv)
 	}
 
     display_title();
-    
+    int sockfd = connect_to(argv[1], atoi(argv[2]));
 	while (1) {
 	
-		int sockfd = connect_to(argv[1], atoi(argv[2]));
+	
     
 		char command[MAX_DATA];
         get_command(command, MAX_DATA);
@@ -42,8 +41,8 @@ int main(int argc, char** argv)
 			printf("Now you are in the chatmode\n");
 			process_chatmode(argv[1], reply.port);
 		}
-	
 		close(sockfd);
+
     }
 
     return 0;
@@ -59,22 +58,39 @@ int main(int argc, char** argv)
  */
 int connect_to(const char *host, const int port)
 {
-	  struct sockaddr_in server_addr;
 	
 	  int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-	  server_addr.sin_family = AF_INET; 
-	  server_addr.sin_addr.s_addr = atoi(host); // assign hostname
-	  server_addr.sin_port = htons(port); // assign the port
+	  if(sockfd < 0){
+		fprintf(stderr, "Socket did not get established\n");
+	  	exit(1);
+	  }
+	  
+	  struct sockaddr_in server_addr;
 
-	  int err = connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr));
-		if (err == -1) {
-		//printf("ERROR: connection on client-side failed\n");
-		return EXIT_FAILURE;
-	}
+	  server_addr.sin_family = AF_INET; 
+	  server_addr.sin_port = htons(port); // assign the port
+	  server_addr.sin_addr.s_addr = inet_addr(host); // assign hostname
+	  
+	  struct hostent* hostname; // setup the host
+	  if(server_addr.sin_addr.s_addr == (unsigned long) INADDR_NONE){
+		hostname = gethostbyname(host);
+		if(hostname == (struct hostent *) NULL){
+			fprintf(stderr, "Host is not resolved");
+			exit(1);
+		}
+		memcpy(&server_addr.sin_addr, hostname -> h_addr, sizeof(server_addr.sin_addr));
+
+	  }
+		
+		int err = connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr));
+		if (err < 0) {
+			printf("ERROR: connection on client-side failed\n");
+			exit(1);
+		}
 
 	// Send name
 
-//	printf("=== WELCOME TO THE CHATROOM ===\n");
+	printf("=== WELCOME TO THE CHATROOM ===\n");
 
 	return sockfd;
 }
@@ -91,57 +107,9 @@ int connect_to(const char *host, const int port)
 struct Reply process_command(const int sockfd, char* command)
 {
 	
-	char* command_type = strtok(command, " "); // 
-	char* roomName = strtok(NULL, " ");
-	// printf("Command given is: %s" , command_type);
-	// printf("Room name is: %s" , roomName);
-	
-	int sent_amount; // initialize buffers and sizes
-	int recv_amount;
-	char bufferSent[256];
-	char bufferRecv[256];
-	
-	strcpy(bufferSent, command); // copy command to the buffer to send
-	
-	sent_amount = send(sockfd, bufferSent, sizeof(bufferSent), 0); // send information to server and receive response
-	recv_amount = recv(sockfd, bufferRecv, sizeof(bufferRecv), 0);
-
-	struct Reply reply;
-	char* statusReturn;
-	
-	statusReturn = strtok(bufferRecv, " ");
-	if(!strcmp(statusReturn, "SUCCESS")){ // check for type of status
-		reply.status = 0;
-	}else if (!strcmp(statusReturn, "FAILURE_ALREADY_EXISTS")) {
-		reply.status = 1;
-	}else if (!strcmp(statusReturn, "FAILURE_NOT_EXISTS")){
-		reply.status = 2;
-	}else if (!strcmp(statusReturn, "FAILURE_INVALID")){
-		reply.status = 3;
-	}else if(!strcmp(statusReturn, "FAILURE_UNKNOWN")){
-		reply.status = 4;
-	}else{
-		printf("no reply status possible");	
-	}
-
-	if(!strcmp(command_type, "CREATE") || !strcmp(command_type, "DELETE")){ // change values of reply to suit command type
-		//printf("inside of the CREATE/DELETE branch");
-	}else if (!strcmp(command_type, "JOIN")){
-		//printf("inside of the JOIN branch");
-		reply.num_member = strtok(bufferRecv, " ");
-		reply.port = strtok(NULL, " ");
-	}else if(!strcmp(command_type, "LIST")){
-		int listIterator = 0;
-		char* tempRoom = strtok(NULL, " ");
-		while(tempRoom!= NULL){
-			reply.list_room[listIterator] = tempRoom;
-			listIterator++;
-		}
-		//printf("inside of the LIST branch");
-	}else{
-		//printf("invalid option received from server");
-		reply.status = FAILURE_INVALID;
-	}
+    send(sockfd, command, strlen(command),0);
+    struct Reply reply;
+    recv(sockfd, &reply, sizeof(reply), 0);
 	return reply;
 }
 
@@ -153,16 +121,41 @@ struct Reply process_command(const int sockfd, char* command)
  */
 void process_chatmode(const char* host, const int port)
 {
-	char*message;
-	char*command;
 	int socket = connect_to(host,port); // connect to socket
-
-	display_title(); // show menu, get command from user
-	get_command(command, sizeof(command));
-
+	
+	//instantiate variables 
+	int selectError;
+	fd_set tempFd;
+	struct timeval timevalue;
+	timevalue.tv_sec = 0;
+	timevalue.tv_usec = 10;
+	
+	char message[256];
+	
 	while(1){ // continue to get messages from the user and display messages from others
-		get_message(message, sizeof(message));
-		display_message(message);
+		FD_ZERO(&tempFd);
+		FD_SET(0, &tempFd);
+		FD_SET(socket, &tempFd);
+		selectError = select(socket + 1, &tempFd, NULL, NULL, &timevalue);
+		
+		if(FD_ISSET(0, &tempFd)){ // user begins a chat
+			get_message(message, sizeof(message));
+			int bytes = send(socket, message, strlen(message), 0);
+		}
+		
+		if(FD_ISSET(socket, &tempFd)){ // server is sending back a message
+			int bytes = recv(socket, message, sizeof(message), 0);
+			message[bytes] = '\0';
+			printf("\r");
+			display_message(message);
+			
+			if(!strcmp(message, "Server closing down.")){
+				exit(0);
+			}else if (!strcmp(message, "Chat room closing down.")){
+				display_title();
+				return;
+			}
+		}
 	}
 
 }

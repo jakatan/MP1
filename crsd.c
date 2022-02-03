@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
-#include <strings.h>
 #include <string.h>
 #include <pthread.h>
 #include <sys/types.h>
@@ -16,174 +15,235 @@
 #define MAX_CLIENTS 256
 #define MAX_BUFFER 2048
 
-static int uid = 10;
-
-
-room room_db[MAX_CLIENTS]; // database for all rooms
-
-typedef struct{
-    struct sockaddr_in address;
-    int sockfd;
-    int uid;
-}client_t;
-
-client_t *clients[MAX_CLIENTS]; // array to store max users
-
-pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-void queue_add(client_t *cl){ // add clients to queue when request is sent
-    pthread_mutex_lock(&clients_mutex);
+typedef struct room{
+    char room_name[256];
+    int port_num, slave_socket;
+    int num_members;
+    int clientValue;
+    int clientFDS[MAX_CLIENTS];
     
-    for (int i = 0; i < MAX_CLIENTS; i++){
-        if(!clients[i]){
-            clients[i] = cl;
-            break;
-        }
-    }
-    pthread_mutex_unlock(&clients_mutex);
-}
+}room;
 
-void queue_remove(int uid){ // method to pop clients from a queue once request is resolved
-    pthread_mutex_lock(&clients_mutex);
-    
-  for(int i = 0; i < MAX_CLIENTS; i++){
-      if(clients[i]){
-          if(clients[i]->uid == uid){
-              clients[i] = NULL;
-              break;
-          } 
-      }
-        
-    }
-    pthread_mutex_unlock(&clients_mutex);
-}
+typedef struct conChat{
+    struct room* room;
+    int clientFD;
+}conChat;
 
-void *handle_client(int *dbValue, int sockfd){
-    char buffer[MAX_BUFFER];
-    int leave = 0;
-    
-    bzero(buffer, MAX_BUFFER);
-    
+int listenfd; 
+int dbValue = 0; // counter for database arrays
+struct room room_db[MAX_CLIENTS]; // database for all rooms
+
+void continue_chat(struct conChat* package){
+    char* buffer[MAX_DATA];
     while(1){
-        if(leave){
-            break;
-        }
-        
-        int receive = recv(sockfd, buffer, MAX_BUFFER, 0);
-        char* commandType = strtok(buffer," ");
-        char buffer_Sent[256];
-        int sent_Amount;
-        char* status;
-        if(receive > 0){
-            if(!strcmp(commandType, "CREATE")){ // create room
-                char* roomName = strtok(NULL, " ");
-                for (int i = 0; i < strlen(room_db); i++){ // search if room exists
-                    if(!strcmp(roomName,room_db[i].room_name)){
-                        status = "FAILURE_ALREADY_EXISTS";
-                    }
+        int bytes = recv(package->clientFD, buffer, sizeof(buffer), 0);
+        if(bytes <= 0){
+            for(int i = 0; i < sizeof(package -> room -> clientFDS); i++){
+                if(package-> room->clientFDS[i]==package -> clientFD){
+                    close(package -> clientFD);
                 }
-                int slaveSock = socket (AF_INET, SOCK_STREAM, 0); // create new room + socket
-                room newRoom;
-                strcpy(newRoom.room_name, roomName);
-                newRoom.port_num = "127.0.0.1"; // might need to change
-                newRoom.num_members = 1;
-                strcpy(newRoom.slave_socket,slaveSock);
-                
-                room_db[*dbValue] = newRoom; // add room to databse, iterate counter
-                dbValue++;
-                status = "SUCCESS";
-                strcpy(buffer_Sent, status);
-            }else if (!strcmp(commandType, "DELETE") ){
-                int found = 0;
-                char* roomName = strtok(NULL, " ");
-                for (int i = 0; i < strlen(room_db); i++){ // search if room exists
-                    if(!strcmp(roomName,room_db[i].room_name)){
-                        strcpy(room_db[i].room_name, "");
-                        strcpy(room_db[i].port_num, "");
-                        strcpy(room_db[i].num_members, 0);
-                        strcpy(room_db[i].slave_socket, 0);
-                    }
-                } 
-                if(!found){
-                    status = "FAILURE_NOT_EXISTS";
-                }else{
-                    status = "SUCCESS";
-                }
-                strcpy(buffer_Sent, status); // if room already exists update status
-            }else if(!strcmp(commandType, "JOIN") ){
-                int found = 0;
-                char* roomName = strtok(NULL, " ");
-                for (int i = 0; i < strlen(room_db); i++){ // search if room exists
-                    if(!strcmp(roomName,room_db[i].room_name)){
-                        status = "SUCCESS ";
-                        strcat(status, room_db[i].num_members+1);
-                        strcat(status, room_db[i].port_num);
-                        room_db[i].num_members = room_db[i].num_members+1;  // update room number
-                        found = 1;
-                    }
-                } 
-                if(!found){ 
-                    status = "FAILURE_NOT_EXISTS";
-                }
-                strcpy(buffer_Sent, status);
-            }else if(!strcmp(commandType, "LIST") ){
-                int found = 0;
-                if(strlen(room_db)){ // if there is a single room in the database
-                    status = "SUCCESS ";
-                    for(int i = 0; i < strlen(room_db); i++){ // send all of the rooms to the client with spaces seperating them
-                        strcat(status, room_db[i].room_name);
-                        strcat(status, " ");
-                    }
-                }else{
-                    status = "FAILURE_INVALID ";
-                }
-                strcpy(buffer_Sent,status);
-            }else{
-                printf("command type does not exist from server side");
+                exit(1);
             }
-        }else{
-            printf("ERROR: -1\n");
-            leave = 1;
+            for(int i = 0; i < sizeof(package-> room -> clientFDS); i++){
+                if(package-> room->clientFDS[i] != package->clientFD){ // send to everyone but original client
+                    send(package->room->clientFDS[i], buffer, bytes, 0);   
+            }
+        }
+    }
+}
+}
+void roomListen(struct room* tempRoom){
+    while(1){
+        int clientFD = accept(tempRoom -> slave_socket, NULL, NULL);
+        if(clientFD<0){
+            exit(1);
+        }
+        tempRoom -> clientFDS[tempRoom->clientValue] = clientFD;
+        pthread_t thread_id;
+        struct conChat* conn;
+        conn->room = tempRoom;
+        conn->clientFD= clientFD;
+        pthread_create(&thread_id, NULL, continue_chat, conn);
+        pthread_join(thread_id, NULL);
+        
+    }
+}
+
+int createRoom(char* roomName, int* dbValue){
+    for(int i = 0; i < sizeof(room_db); i++){
+        if(!strcmp(room_db[i].room_name, roomName)){ // if room exists, return 0
+            return 0;
         }
     }
     
-    pthread_detach(pthread_self());
+    int tempFD = socket(AF_INET, SOCK_STREAM, 0);
+    if(tempFD < 0){
+        printf("Unable to create socket for new room");
+        return -1;
+    }
     
-    return NULL;
+    struct sockaddr_in tempSocket;
+    tempSocket.sin_family = AF_INET;
+    tempSocket.sin_addr.s_addr = htonl(INADDR_ANY);
+    tempSocket.sin_port = 0;
+    
+    if(bind(tempFD, (struct sockaddr* ) &tempSocket, sizeof(tempSocket))< 0){
+        printf("Unable to bind socket for new room");
+        return -1;
+    }
+    
+    socklen_t length = sizeof(tempSocket);
+    getsockname(tempFD, (struct sockaddr*)& tempSocket, &length);
+    
+    
+    if(listen(tempFD, 10) < 0){
+        printf("Failed on room listen");
+        return -1;
+    }
+    
+    struct room *new_Room = (struct room*) malloc(sizeof(struct room));
+    strcpy(new_Room->room_name,roomName);
+    new_Room->slave_socket = tempFD;
+    new_Room -> port_num = ntohs(tempSocket.sin_port);
+    room_db[*dbValue] = *new_Room;
+    dbValue++;
+    
+    pthread_t thread_id;
+    pthread_create(&thread_id, NULL, roomListen, new_Room);
+    pthread_join(thread_id, NULL);
+    
+    return ntohs(tempSocket.sin_port);
+}
+
+void deleteRoom(struct room* room, char* deletemsg){
+    for(int i = 0; i < sizeof(room->clientFDS); i++){
+        send(room->clientFDS[i], deletemsg, strlen(deletemsg), 0);
+        close(room->clientFDS[i]);
+    }
+    close(room->slave_socket);
+}
+
+
+void *handle_client(int sockfd){
+    char buffer[MAX_BUFFER];
+    int bytes = recv(sockfd, buffer, sizeof(buffer),0);
+    
+    if(bytes <=0){
+        close(sockfd);
+        printf("receive failed on server side");
+        exit(1);
+    }
+    buffer[bytes] = '\0'; // make buffer null terminated
+    
+        char* commandType = strtok(buffer," ");
+        char* roomName;
+        touppercase(commandType, strlen(commandType)-1);
+        printf(commandType);
+            if(!strcmp(commandType, "CREATE")){ // create room, -1 and 0 indicate failure
+                roomName = strtok(NULL, " ");
+                printf("Command Type is: ");
+                printf(commandType);
+                int tempPort = createRoom(roomName, dbValue);
+                struct Reply tempReply;
+                if(tempPort == 0){
+                    tempReply.status = FAILURE_ALREADY_EXISTS;
+                } else if (tempPort == -1){
+                    tempReply.status = FAILURE_UNKNOWN;
+                }else{
+                    tempReply.status = SUCCESS;
+                }
+                send(sockfd, &tempReply, sizeof(tempReply), 0);
+            }else if (!strcmp(commandType, "DELETE") ){ // if room exists delete from db
+                char* roomName = strtok(NULL, " ");
+                struct Reply tempReply;
+                for (int i = 0; i < sizeof(room_db); i++){ // search if room exists
+                    if(!strcmp(roomName,room_db[i].room_name)){
+                        deleteRoom(&room_db[i], "room being deleted.");
+                        tempReply.status = SUCCESS;
+                        send(sockfd, &tempReply, sizeof(tempReply), 0);
+                        return;
+                    }
+                } 
+                tempReply.status = FAILURE_NOT_EXISTS;
+                send(sockfd, &tempReply, sizeof(tempReply), 0);
+            }else if(!strcmp(commandType, "JOIN") ){ // join a room if room exists
+                while((commandType = strtok(NULL, " "))!= NULL){
+                    strcat(roomName,commandType);
+                }
+                    struct Reply tempReply;
+                    for(int i = 0; i < sizeof(room_db); i++){
+                        if(!strcmp(room_db[i].room_name, roomName)){
+                            tempReply.status = SUCCESS;
+                            tempReply.num_member = sizeof(room_db[i].clientFDS);
+                            tempReply.port = room_db[i].port_num;
+                            send(sockfd, &tempReply, sizeof(tempReply), 0);
+                            exit(1);
+                        }
+                    }
+                    tempReply.status = FAILURE_NOT_EXISTS;
+                    send(sockfd, &tempReply, sizeof(tempReply), 0);
+                    
+            }else if(!strcmp(commandType, "LIST") ){ // give back names of existing rooms
+                char fullList [512];
+                for(int i = 0; i < sizeof(room_db); i++){
+                    strcat(room_db[i].room_name, ", ");
+                    strcat(fullList, room_db[i].room_name);
+                }
+                if(strlen(fullList)>0){
+                    fullList[strlen(fullList)-2] = '\0';
+                }else{
+                    strcpy(fullList, "No rooms exist");
+                }
+                
+                struct Reply tempReply;
+                tempReply.status = SUCCESS;
+                strcpy(tempReply.list_room, fullList);
+                send(sockfd, &tempReply, sizeof(tempReply), 0);
+            }else{
+                struct Reply tempReply;
+                tempReply.status = FAILURE_INVALID;
+                send(sockfd, &tempReply, sizeof(tempReply), 0);
+            }
+    
+            close(sockfd);    
+        return NULL;
         
     }
+    
+void kill_server(int sign){ // in case of signal termination, kill server
+    close(listenfd);
+    for(int i = 0; i < sizeof(room_db); i++){
+        deleteRoom(&room_db[i], "Server closing down.");
+    }
+    exit(1);
+}
+
 int main (int argc, char **argv){
-    if (argc!=2){
+    if (argc != 2){
         printf("Usage : %s <port>\n",argv[0]);
-        return EXIT_FAILURE;
+        exit(1);
     }
     
-    char *ip = "127.0.0.1";
     int port = atoi(argv[1]);
     printf("USING PORT %d \n", port);
-    int option = 1;
-    int listenfd = 0;
-    int connfd = 0;
-    struct sockaddr_in serv_addr;
-    struct sockaddr_in cli_addr;
-    pthread_t tid;
-    
+
     listenfd = socket (AF_INET, SOCK_STREAM, 0); // initialize sockaddr
+    signal(SIGINT, kill_server);
+    signal(SIGTERM, kill_server);
+
+    if(listenfd<0){
+        printf("Unable to create server socket");
+        exit(1);
+    }
+    
+    struct sockaddr_in serv_addr;
     serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = inet_addr(ip);
+    serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     serv_addr.sin_port = htons(port);
-    
-    signal (SIGPIPE, SIG_IGN);
-    
-    //socket creation
-	if(setsockopt(listenfd, SOL_SOCKET,(SO_REUSEPORT | SO_REUSEADDR),(char*)&option,sizeof(option)) < 0){
-	    printf("ERROR ON SET SOCKET");
-	    return EXIT_FAILURE;
-	}
 	
 	//bind
      if(bind(listenfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
-         printf("ERROR ON BIND");
+         printf("ERROR ON BIND\n");
          return EXIT_FAILURE;
      }
 	
@@ -193,21 +253,13 @@ int main (int argc, char **argv){
 	    return EXIT_FAILURE;
 	}
 	
-	printf("WELCOME TO CHATROOM \n");
+	//printf("WELCOME TO CHATROOM \n");
 	
 	while(1){
-	    socklen_t clientlen = sizeof(cli_addr);
-	    connfd = accept(listenfd, (struct sockaddr*)&cli_addr, &clientlen );
-	   
-	   client_t *cli = (client_t*)malloc(sizeof(client_t)); 
-	   cli -> address = cli_addr;
-	   cli -> sockfd = connfd;
-	   cli -> uid = uid++;
-	   
-	   // add a client to the queue
-	   queue_add(cli);
-	   pthread_create(&tid, NULL, &handle_client, (void*)cli);
-	   
-	   sleep(1);
+	    pthread_t thread_id;
+        pthread_create(&thread_id, NULL, handle_client, accept(listenfd,NULL,NULL));
+        pthread_join(thread_id, NULL);
 	}
+	
+	
 }
